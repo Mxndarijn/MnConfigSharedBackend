@@ -42,7 +42,7 @@ jobs:
             docker pull ${{ secrets.DOCKER_IMAGE }}:latest
 
             echo ">>> Updating Kubernetes Deployment image..."
-            kubectl set image deployment/minecraft-api minecraft-api=${{ secrets.DOCKER_IMAGE }}:latest
+            kubectl set image deployment/mn-config-shared-backend minecraft-api=${{ secrets.DOCKER_IMAGE }}:latest
 
             echo ">>> Waiting for rollout to finish..."
             kubectl rollout restart deployment minecraft-api
