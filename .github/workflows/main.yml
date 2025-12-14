@@ -1,0 +1,50 @@
+name: Build and Deploy FastAPI
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. Log in to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 3. Build & Push Docker Image
+      - name: Build and Push Docker Image
+        run: |
+          echo ">>> Building Docker image for linux/amd64..."
+          docker build --platform linux/amd64 -t ${{ secrets.DOCKER_IMAGE }}:latest .
+          echo ">>> Pushing Docker image to Docker Hub..."
+          docker push ${{ secrets.DOCKER_IMAGE }}:latest
+
+      # 4. Deploy via SSH
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+            echo ">>> Pulling latest Docker image..."
+            docker pull ${{ secrets.DOCKER_IMAGE }}:latest
+
+            echo ">>> Updating Kubernetes Deployment image..."
+            kubectl set image deployment/minecraft-api minecraft-api=${{ secrets.DOCKER_IMAGE }}:latest
+
+            echo ">>> Waiting for rollout to finish..."
+            kubectl rollout restart deployment minecraft-api
+
+            echo ">>> ✅ Deployment completed successfully!"
