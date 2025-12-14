@@ -42,9 +42,9 @@ jobs:
             docker pull ${{ secrets.DOCKER_IMAGE }}:latest
 
             echo ">>> Updating Kubernetes Deployment image..."
-            kubectl set image deployment/mn-config-shared-backend minecraft-api=${{ secrets.DOCKER_IMAGE }}:latest
+            kubectl set image deployment/mn-config-shared-backend mn-config-shared-backend=${{ secrets.DOCKER_IMAGE }}:latest
 
             echo ">>> Waiting for rollout to finish..."
-            kubectl rollout restart deployment minecraft-api
+            kubectl rollout restart deployment mn-config-shared-backend
 
             echo ">>> ✅ Deployment completed successfully!"
