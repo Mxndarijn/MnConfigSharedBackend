@@ -38,8 +38,8 @@ class ConfigDoc:
     tenant: str
     env: str
     componentKey: str
-    scopeType: str  # 'global' | 'route' | 'page'
-    scopeKey: str   # '*' or route pattern like '/products/*' or page id
+    scopeType: str  # 'global' | 'route' | 'page' | 'page-instance'
+    scopeKey: str   # '*' or route pattern like '/products/*' or page id or '<page>#<instance>'
     version: int
     value: Dict[str, Any]
     createdAt: float
@@ -114,7 +114,7 @@ def validate_value(component_key: str, value: Dict[str, Any]) -> Optional[List[s
 
 
 def sort_scopes(scopes: List[ConfigDoc]) -> List[ConfigDoc]:
-    # Specificity: global < page (exact) < route (longer pattern is more specific)
+    # Specificity: global < page (exact) < route (longer pattern is more specific) < page-instance (most specific)
     def score(doc: ConfigDoc) -> Tuple[int, int]:
         if doc.scopeType == 'global':
             return (0, 0)
@@ -124,6 +124,8 @@ def sort_scopes(scopes: List[ConfigDoc]) -> List[ConfigDoc]:
         if doc.scopeType == 'route':
             # longer patterns considered more specific
             return (2, len(doc.scopeKey))
+        if doc.scopeType == 'page-instance':
+            return (3, len(doc.scopeKey))
         return (0, 0)
     return sorted(scopes, key=score)
 
@@ -146,13 +148,17 @@ def latest_versions_for(identity: Tuple[str, str, str]) -> List[ConfigDoc]:
     return list(latest.values())
 
 
-def effective_for_component(tenant: str, env: str, component_key: str, route: Optional[str] = None, page: Optional[str] = None) -> Dict[str, Any]:
+def effective_for_component(tenant: str, env: str, component_key: str, route: Optional[str] = None, page: Optional[str] = None, instance: Optional[str] = None) -> Dict[str, Any]:
     effective = default_for(component_key)
     docs = latest_versions_for((tenant, env, component_key))
-    # Apply global, then page (matching page id), then route (matching pattern and sorted by specificity)
+    # Apply global, then page (matching page id), then route (matching pattern), then page-instance (most specific)
     globals_ = [d for d in docs if d.scopeType == 'global']
     pages_ = [d for d in docs if d.scopeType == 'page' and page and d.scopeKey == page]
     routes_ = [d for d in docs if d.scopeType == 'route' and route and match_route(d.scopeKey, route)]
+    insts_: List[ConfigDoc] = []
+    if page and instance:
+        inst_key = f"{page}#{instance}"
+        insts_ = [d for d in docs if d.scopeType == 'page-instance' and d.scopeKey == inst_key]
 
     for d in sort_scopes(globals_):
         effective = deep_merge(effective, d.value)
@@ -160,11 +166,13 @@ def effective_for_component(tenant: str, env: str, component_key: str, route: Op
         effective = deep_merge(effective, d.value)
     for d in sort_scopes(routes_):
         effective = deep_merge(effective, d.value)
+    for d in sort_scopes(insts_):
+        effective = deep_merge(effective, d.value)
 
     return effective
 
 
-def effective_all(tenant: str, env: str, route: Optional[str], page: Optional[str]) -> Dict[str, Any]:
+def effective_all(tenant: str, env: str, route: Optional[str], page: Optional[str], instance: Optional[str]) -> Dict[str, Any]:
     # determine all known component keys from registry + store
     keys = set(_registry.keys())
     for d in _store:
@@ -172,7 +180,7 @@ def effective_all(tenant: str, env: str, route: Optional[str], page: Optional[st
             keys.add(d.componentKey)
     out: Dict[str, Any] = {}
     for key in sorted(keys):
-        out[key] = effective_for_component(tenant, env, key, route=route, page=page)
+        out[key] = effective_for_component(tenant, env, key, route=route, page=page, instance=instance)
     return out
 
 # -----------------------
@@ -184,9 +192,10 @@ def get_all_effective(
     env: str = Query('dev', description='Environment key'),
     route: Optional[str] = Query(None, description='Optional current URL path'),
     page: Optional[str] = Query(None, description='Optional page id'),
+    instance: Optional[str] = Query(None, description='Optional instance id for the given page (page-instance scope)'),
 ):
     """Get effective merged configuration for all components."""
-    result = effective_all(tenant, env, route, page)
+    result = effective_all(tenant, env, route, page, instance)
     return result
 
 
@@ -197,9 +206,10 @@ def get_component_effective(
     env: str = Query('dev', description='Environment key'),
     route: Optional[str] = Query(None, description='Optional current URL path'),
     page: Optional[str] = Query(None, description='Optional page id'),
+    instance: Optional[str] = Query(None, description='Optional instance id for the given page (page-instance scope)'),
 ):
     """Get effective merged configuration for a single component."""
-    result = effective_for_component(tenant, env, component_key, route=route, page=page)
+    result = effective_for_component(tenant, env, component_key, route=route, page=page, instance=instance)
     return result
 
 
@@ -226,7 +236,7 @@ def upsert_component(
     """Upsert (append) a new version for a component scope."""
     tenant = body.get('tenant', tenant_q or 'default')
     env = body.get('env', env_q or 'dev')
-    scope_type = body.get('scopeType', 'global')  # 'global' | 'route' | 'page'
+    scope_type = body.get('scopeType', 'global')  # 'global' | 'route' | 'page' | 'page-instance'
     scope_key = body.get('scopeKey', '*')
     value = body.get('value', {})
 
@@ -289,4 +299,4 @@ def health():
 if __name__ == '__main__':
     # python main.py
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=5050, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=5050, reload=True)
